@@ -3,10 +3,11 @@ package com.abrahamcast.spring.security.postgresql.SpringBootSecurityPostgresqlA
 import com.abrahamcast.spring.security.postgresql.SpringBootSecurityPostgresqlApplication.models.*;
 import com.abrahamcast.spring.security.postgresql.SpringBootSecurityPostgresqlApplication.payload.request.TweetReactionRequest;
 import com.abrahamcast.spring.security.postgresql.SpringBootSecurityPostgresqlApplication.repository.*;
+import com.abrahamcast.spring.security.postgresql.SpringBootSecurityPostgresqlApplication.security.services.UserDetailsImpl;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -29,57 +30,58 @@ public class TweetReactionController {
     @Autowired
     private ReactionRepository reactionRepository;
 
-    // ✅ Agregar o actualizar reacción SIN JWT
+    // ✅ Agregar o actualizar reacción (requiere JWT)
     @PostMapping("/react")
-    public ResponseEntity<?> reactToTweet(@RequestBody TweetReactionRequest request) {
-        // Obtener user fijo (ID 1) — reemplaza según sea necesario
-        Optional<User> userOpt = userRepository.findById(1L);
-        Optional<Tweet> tweetOpt = tweetRepository.findById(request.getTweetId());
-        Optional<Reaction> reactionOpt = reactionRepository.findById(request.getReactionId());
-
-        if (userOpt.isEmpty() || tweetOpt.isEmpty() || reactionOpt.isEmpty()) {
-            return ResponseEntity.badRequest().body("Datos inválidos");
-        }
-
-        User user = userOpt.get();
-        Tweet tweet = tweetOpt.get();
-        Reaction newReaction = reactionOpt.get();
-
-        Optional<TweetReaction> existingReactionOpt = tweetReactionRepository.findByTweetAndUser(tweet, user);
-
-        if (existingReactionOpt.isPresent()) {
-            TweetReaction existing = existingReactionOpt.get();
-
-            if (existing.getReaction().getId().equals(newReaction.getId())) {
-                return ResponseEntity.ok(Map.of(
-                    "message", "Ya reaccionaste con esta reacción",
-                    "reaction", newReaction.getName().name()
-                ));
-            }
-
-            existing.setReaction(newReaction);
-            tweetReactionRepository.save(existing);
-            return ResponseEntity.ok(Map.of(
-                "message", "Reacción actualizada",
-                "reaction", newReaction.getName().name()
-            ));
-        } else {
-            TweetReaction tweetReaction = new TweetReaction();
-            tweetReaction.setTweet(tweet);
-            tweetReaction.setUser(user);
-            tweetReaction.setReaction(newReaction);
-            tweetReactionRepository.save(tweetReaction);
-            return ResponseEntity.ok(Map.of(
-                "message", "Reacción registrada",
-                "reaction", newReaction.getName().name()
-            ));
-        }
+public ResponseEntity<?> reactToTweet(@RequestBody TweetReactionRequest request, Authentication authentication) {
+    if (authentication == null || !authentication.isAuthenticated()) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("No autenticado");
     }
 
-    // ❌ Eliminar reacción sin autenticación
+    String username = authentication.getName();
+    Optional<User> userOpt = userRepository.findByUsername(username);
+    Optional<Tweet> tweetOpt = tweetRepository.findById(request.getTweetId());
+    Optional<Reaction> reactionOpt = reactionRepository.findById(request.getReactionId());
+
+    if (userOpt.isEmpty() || tweetOpt.isEmpty() || reactionOpt.isEmpty()) {
+        return ResponseEntity.badRequest().body("Datos inválidos");
+    }
+
+    User user = userOpt.get();
+    Tweet tweet = tweetOpt.get();
+    Reaction newReaction = reactionOpt.get();
+
+    Optional<TweetReaction> existingReactionOpt = tweetReactionRepository.findByTweetAndUser(tweet, user);
+
+    if (existingReactionOpt.isPresent()) {
+        TweetReaction existing = existingReactionOpt.get();
+
+        if (existing.getReaction().getId().equals(newReaction.getId())) {
+            return ResponseEntity.ok(Map.of("message", "Ya reaccionaste con esta reacción"));
+        }
+
+        existing.setReaction(newReaction);
+        tweetReactionRepository.save(existing);
+        return ResponseEntity.ok(Map.of("message", "Reacción actualizada"));
+    } else {
+        TweetReaction tweetReaction = new TweetReaction();
+        tweetReaction.setTweet(tweet);
+        tweetReaction.setUser(user);
+        tweetReaction.setReaction(newReaction);
+        tweetReactionRepository.save(tweetReaction);
+        return ResponseEntity.ok(Map.of("message", "Reacción registrada"));
+    }
+}
+
+
+    // ❌ Eliminar reacción (JWT)
     @DeleteMapping("/tweet/{tweetId}")
-    public ResponseEntity<?> removeReaction(@PathVariable Long tweetId) {
-        Optional<User> userOpt = userRepository.findById(1L);
+    public ResponseEntity<?> removeReaction(@PathVariable Long tweetId, Authentication authentication) {
+        if (authentication == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("No autenticado");
+        }
+
+        String username = authentication.getName();
+        Optional<User> userOpt = userRepository.findByUsername(username);
         Optional<Tweet> tweetOpt = tweetRepository.findById(tweetId);
 
         if (userOpt.isEmpty() || tweetOpt.isEmpty()) {
@@ -102,7 +104,7 @@ public class TweetReactionController {
         }
     }
 
-    // 📊 Contar reacciones
+    // 📊 Contar reacciones por tipo
     @GetMapping("/count/tweet/{tweetId}")
     public ResponseEntity<?> countReactionsByType(@PathVariable Long tweetId) {
         List<TweetReaction> reactions = tweetReactionRepository.findByTweetId(tweetId);
@@ -117,3 +119,4 @@ public class TweetReactionController {
         return ResponseEntity.ok(countByType);
     }
 }
+
